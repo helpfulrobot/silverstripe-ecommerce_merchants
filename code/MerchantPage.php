@@ -50,6 +50,13 @@ class MerchantPage extends ProductGroup {
 		return DataObject::get('MerchantLocation', "\"ParentID\" = $this->ID AND " . MerchantLocation::$active_filter);
 	}
 
+	function LinkToAllMerchantsPage(){
+		$allMerchantsPage = DataObject::get_one("AllMerchantsPage");
+		if($allMerchantsPage){
+			return $allMerchants->Link()."?merchant=".$this->ID;
+		}
+	}
+
 	function Products() {
 		$products = DataObject::get('MerchantProduct', "\"ParentID\" = $this->ID");
 		if($products) {
