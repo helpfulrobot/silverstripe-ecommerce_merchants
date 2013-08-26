@@ -3,10 +3,10 @@
 class MerchantLocation extends ProductGroup {
 
 
-	/**
-	 * icons for the page
-	 * @var String
-	 */
+	/****************************************
+	 * Model
+	 ****************************************/
+
 	public static $icon = "ecommerce_merchants/images/MerchantLocation";
 
 	static $db = array(
@@ -26,7 +26,19 @@ class MerchantLocation extends ProductGroup {
 		'AdditionalImage4' => 'Image'
 	);
 
-	static $active_filter = 'ShowInSearch = 1';
+	protected static $active_filter = 'ShowInSearch = 1';
+	public static function get_active_filter($checkMerchant = true) {
+		$filter = self::$active_filter;
+		if($checkMerchant) {
+			$merchantID = intval(Session::get(AllMerchantsPage_Controller::get_merchant_session_param()));
+			if($merchantID) {
+				$filter .= " AND ParentID = $merchantID";
+			}
+		}
+		return $filter;
+	}
+
+	protected static $maximum = 100000;
 
 	static $default_parent = 'MerchantPage';
 
@@ -46,6 +58,10 @@ class MerchantLocation extends ProductGroup {
 		return $this->canFrontEndEdit($member);
 	}
 
+	/****************************************
+	 * CRUD forms
+	 ****************************************/
+
 	function getCMSFields() {
 		$fields = parent::getCMSFields();
 		foreach(array('ProductDisplay', 'OtherProductsShown') as $name) {
@@ -53,7 +69,10 @@ class MerchantLocation extends ProductGroup {
 		}
 		$fields->removeFieldFromTab('Root.Content.Main', 'Content');
 		$cities = DataObject::get('City');
-		$cities = $cities->map('ID', 'Name');
+		$cityArray = array();
+		if($cities && $cities->count()) {
+			$cityArray = $cities->map('ID', 'Name');
+		}
 		$fields->addFieldsToTab(
 			'Root.Content.Images',
 			array(
@@ -69,7 +88,7 @@ class MerchantLocation extends ProductGroup {
 			new TextField('Address', _t('MerchantLocation.ADDRESS', 'Address')),
 			new TextField('Address2', _t('MerchantLocation.ADDRESS2', 'Address Line 2')),
 			new TextField('PostalCode', _t('MerchantLocation.POSTALCODE', 'Postal Code')),
-			new DropdownField('CityID', _t('MerchantLocation.CITY', 'City'), $cities, '', null, ''),
+			new DropdownField('CityID', _t('MerchantLocation.CITY', 'City'), $cityArray, '', null, ''),
 			new TextField('Phone', _t('MerchantLocation.PHONE', 'Phone')),
 			new TextareaField('OpeningHours', _t('MerchantLocation.OPENINGHOURS', 'Opening hours'))
 		));
@@ -81,6 +100,45 @@ class MerchantLocation extends ProductGroup {
 		}
 		return $fields;
 	}
+
+	function getFrontEndFields() {
+		$cities = DataObject::get('City');
+		$cities = $cities->map('ID', 'Name');
+		$productHeader = new HiddenField("ProductHeaderHidden");
+		$productSelector = new HiddenField("ProductSelector");
+		if($this->ID) {
+			$products = DataObject::get('MerchantProduct', "ParentID = $this->ParentID");
+			if($products) {
+				$productHeader = new HeaderField('ProductHeader', _t('MerchantLocation.PRODUCTS', 'Products'));
+				$productSelector = new CheckboxSetField('AlsoShowProducts', '', $products);
+			}
+		}
+		$fields = new FieldSet(
+			new TextField('Title', $this->fieldLabel('Title')),
+			//new CheckboxField('Featured', _t('MerchantLocation.IS_FEATURED', 'Featured Location')),
+			new CheckboxField('ShowInSearch', _t('MerchantLocation.SHOW_IN_SEARCH', 'Show on website (untick to hide altogether)')),
+			new TextField('Address', _t('MerchantLocation.ADDRESS', 'Address')),
+			new TextField('Address2',  _t('MerchantLocation.ADDRESS2', 'Address 2')),
+			new TextField('PostalCode', _t('MerchantLocation.POSTALCODE', 'Postal Code')),
+			new DropdownField('CityID', _t('City.SINGULARNAME', 'City'), $cities, '', null, ''),
+			new TextField('Phone', _t('MerchantLocation.PHONE', 'Phone')),
+			new TextareaField('OpeningHours', _t('MerchantLocation.OPENINGHOURS', 'Opening Hours')),
+			new HeaderField('Images', _t('MerchantLocation.IMAGES', 'Images')),
+			new SimpleImageField('Image', _t('MerchantLocation.IMAGE', 'IMAGE')." 1"),
+			new SimpleImageField('AdditionalImage1', _t('MerchantLocation.IMAGE', 'IMAGE')." 2"),
+			new SimpleImageField('AdditionalImage2', _t('MerchantLocation.IMAGE', 'IMAGE')." 3"),
+			new SimpleImageField('AdditionalImage3', _t('MerchantLocation.IMAGE', 'IMAGE')." 4"),
+			new SimpleImageField('AdditionalImage4', _t('MerchantLocation.IMAGE', 'IMAGE')." 5"),
+			$productHeader,
+			$productSelector
+		);
+		$requiredFields = new RequiredFields('Title', 'Address', 'CityID');
+		return array($fields, $requiredFields);
+	}
+
+	/****************************************
+	 * Controller like functions
+	 ****************************************/
 
 	function currentInitialProducts() {
 		$products = $this->AlsoShowProducts();
@@ -98,6 +156,10 @@ class MerchantLocation extends ProductGroup {
 		return $this->Link('edit');
 	}
 
+	/****************************************
+	 * Read and Write
+	 ****************************************/
+
 	function onBeforeWrite() {
 		//add URLSegment first so that parent (SiteTree)
 		//has a change to adjust the URLSegment
@@ -114,41 +176,21 @@ class MerchantLocation extends ProductGroup {
 
 	function onAfterWrite() {
 		parent::onAfterWrite();
-		$parent = $this->Parent();
+		$parent = DataObject::get_by_id("MerchantPage", $this->ParentID);
 		$filter = '';
-		if($parent->exists() && is_a($parent, self::$default_parent)) {
-			$products = DataObject::get('MerchantProduct', "ParentID = $this->ParentID");
+		if($parent) {
+			$products = DataObject::get('MerchantProduct', "\"ParentID\" = $this->ParentID");
 			if($products) {
 				$products = implode(',', $products->map('ID', 'ID'));
-				$filter = " AND ProductID NOT IN ($products)";
+				$filter = " AND \"ProductID\" NOT IN ($products)";
 			}
 		}
-		DB::query("DELETE FROM Product_ProductGroups WHERE ProductGroupID = $this->ID$filter");
+		DB::query("DELETE FROM \"Product_ProductGroups\" WHERE \"ProductGroupID\" = $this->ID$filter");
 	}
 
-	function getFrontEndFields() {
-		$cities = DataObject::get('City');
-		$cities = $cities->map('ID', 'Name');
-		$fields = new FieldSet(
-			new TextField('Title', $this->fieldLabel('Title')),
-			new CheckboxField('Featured', _t('MerchantLocation.IS_FEATURED', 'Featured Product')),
-			new CheckboxField('ShowInSearch', _t('MerchantLocation.SHOW_IN_SEARCH', 'Show on website (untick to hide altogether)')),
-			new TextField('Address', _t('MerchantLocation.ADDRESS', 'Address')),
-			new TextField('Address2',  _t('MerchantLocation.ADDRESS2', 'Address 2')),
-			new TextField('PostalCode', _t('MerchantLocation.POSTALCODE', 'Postal Code')),
-			new DropdownField('CityID', _t('City.SINGULARNAME', 'City'), $cities, '', null, ''),
-			new TextField('Phone', _t('MerchantLocation.PHONE', 'Phone')),
-			new TextareaField('OpeningHours', _t('MerchantLocation.OPENINGHOURS', 'Opening Hours')),
-			new HeaderField('Images', _t('MerchantLocation.IMAGES', 'Images')),
-			new SimpleImageField('Image', _t('MerchantLocation.IMAGE', 'IMAGE')." 1"),
-			new SimpleImageField('AdditionalImage1', _t('MerchantLocation.IMAGE', 'IMAGE')." 2"),
-			new SimpleImageField('AdditionalImage2', _t('MerchantLocation.IMAGE', 'IMAGE')." 3"),
-			new SimpleImageField('AdditionalImage3', _t('MerchantLocation.IMAGE', 'IMAGE')." 4"),
-			new SimpleImageField('AdditionalImage4', _t('MerchantLocation.IMAGE', 'IMAGE')." 5")
-		);
-		$requiredFields = new RequiredFields('Title', 'Address', 'CityID');
-		return array($fields, $requiredFields);
-	}
+	/****************************************
+	 * Controller Like Functions
+	 ****************************************/
 
 	function Map($width = 400, $height = 260, $zoom = 15){
 		return $this->getMap($width, $height, $zoom);
@@ -188,6 +230,7 @@ class MerchantLocation extends ProductGroup {
 	}
 
 	private static $categories_cache = array();
+
 	/**
 	 * returns the categories for all the products sold in the location
 	 * @return DataObjectSet | Null
@@ -247,6 +290,31 @@ class MerchantLocation extends ProductGroup {
 		}
 	}
 
+	function AllImages(){
+		$dos = new DataObjectSet();
+		$images = array();
+		$images[0] = $this->BestAvailableImage();
+		$images[1] = $this->AdditionalImage1();
+		$images[2] = $this->AdditionalImage2();
+		$images[3] = $this->AdditionalImage3();
+		$images[4] = $this->AdditionalImage4();
+		foreach($images as $key => $image) {
+			if($image && $image->exists() && file_exists($image->getFullPath())) {
+				$dos->push($image);
+			}
+			else {
+				unset($images[$key]);
+			}
+		}
+		if(count($images)) {
+			return $dos;
+		}
+		return null;
+	}
+
+	/****************************************
+	 * SELECTING PRODUCTS
+	 ****************************************/
 
 	/**
 	 * Returns the class we are working with
@@ -339,34 +407,17 @@ class MerchantLocation extends ProductGroup {
 	 **/
 	function ProductsPerPage() {return $this->MyNumberOfProductsPerPage();}
 	function MyNumberOfProductsPerPage() {
-		return 1000;
+		return 10;
 	}
 
-	function AllImages(){
-		$dos = new DataObjectSet();
-		$images = array();
-		$images[0] = $this->BestAvailableImage();
-		$images[1] = $this->AdditionalImage1();
-		$images[2] = $this->AdditionalImage2();
-		$images[3] = $this->AdditionalImage3();
-		$images[4] = $this->AdditionalImage4();
-		foreach($images as $key => $image) {
-			if($image && $image->exists() && file_exists($image->getFullPath())) {
-				$dos->push($image);
-			}
-			else {
-				unset($images[$key]);
-			}
-		}
-		if(count($images)) {
-			return $dos;
-		}
-		return null;
-	}
 
 }
 
 class MerchantLocation_Controller extends ProductGroup_Controller {
+
+	/****************************************
+	 * ACTIONS
+	 ****************************************/
 
 	function edit() {
 		if(! $this->canFrontEndEdit()) {
@@ -375,10 +426,22 @@ class MerchantLocation_Controller extends ProductGroup_Controller {
 		return array();
 	}
 
+	/****************************************
+	 * TEMPLATE CONTROLLERS
+	 ****************************************/
+
+	function AllMerchantsPage(){
+		return DataObject::get_one("AllMerchantsPage");
+	}
+
+	/****************************************
+	 * FORMS
+	 ****************************************/
+
 	function EditForm() {
 		list($fields, $requiredFields) = $this->getFrontEndFields();
 		$actions = new FieldSet(
-			new FormAction('saveEditForm', _t('MerchantAdminAccountPage_Controller.SAVE_DETAILS', 'Save Details')),
+			new FormAction('saveeditform', _t('MerchantAdminAccountPage_Controller.SAVE_DETAILS', 'Save Details')),
 			new FormAction('disableLocation', _t('ModelAdmin.DELETE', 'Delete'))
 		);
 		$form = new Form($this, 'EditForm', $fields, $actions, $requiredFields);
@@ -386,14 +449,14 @@ class MerchantLocation_Controller extends ProductGroup_Controller {
 		return $form;
 	}
 
-	function saveEditForm($data, $form) {
+	function saveeditform($data, $form) {
 		if($this->canFrontEndEdit()) {
 			try {
 				$form->saveInto($this->dataRecord);
 				$this->MenuTitle = $this->Title; // Copy of the title on the menu title
 				$this->dataRecord->URLSegment = null; // To reset the value of the URLSegment in the onBeforeWrite of SiteTree
-				$this->writeToStage('Stage');
-				$this->Publish('Stage', 'Live');
+				$this->dataRecord->writeToStage('Stage');
+				$this->dataRecord->doPublish();
 				$form->sessionMessage(_t('MerchantLocation_Controller.EDIT_SUCCESS', 'Your store details have been saved successfully.'), 'good');
 			} catch (ValidationException $e) {
 				$form->sessionMessage(_t('MerchantLocation_Controller.SAVE_STORE_DETAILS_ERROR', 'Your store details could not be saved.'), 'bad');
@@ -402,11 +465,11 @@ class MerchantLocation_Controller extends ProductGroup_Controller {
 		return Director::redirect($this->EditLink()); // Not redirectBack because the URLSegment might have changed
 	}
 
-	function disableLocation($data, $form) {
+	function disablelocation($data, $form) {
 		if($this->canFrontEndEdit()) {
 			$this->dataRecord->ShowInMenus = $this->dataRecord->ShowInSearch = false;
-			$this->writeToStage('Stage');
-			$this->Publish('Stage', 'Live');
+			$this->dataRecord->writeToStage('Stage');
+			$this->dataRecord->doPublish();
 			$this->dataRecord->extend('onAfterDisable');
 		}
 		return Director::redirect($this->Parent()->Link());

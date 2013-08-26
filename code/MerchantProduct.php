@@ -2,9 +2,25 @@
 
 class MerchantProduct extends Product {
 
+	/****************************************
+	 * Model Setup
+	 ****************************************/
+
 	static $many_many = array(
 		'Categories' => 'Category'
 	);
+
+	protected static $active_filter = 'ShowInSearch = 1 AND AllowPurchase = 1';
+	public static function get_active_filter($cityID = 0, $categoryID = 0) {
+		$filter = self::$active_filter;
+		$merchantID = AllMerchantsPage_Controller::get_only_show_filter();;
+		if($merchantID) {
+			$filter .= " AND ParentID = $merchantID";
+		}
+		return $filter;
+	}
+
+	protected static $minimum_sort = 100000;
 
 	static $default_parent = 'MerchantPage';
 
@@ -24,50 +40,29 @@ class MerchantProduct extends Product {
 		return $this->canFrontEndEdit($member);
 	}
 
+	/****************************************
+	 * CRUD Forms
+	 ****************************************/
+
 	function getCMSFields() {
 		$fields = parent::getCMSFields();
 		$fields->removeByName('AlsoShowHere');
 		$fields->replaceField('Content', new TextareaField('Content', _t('MerchantProduct.CONTENT', 'Content')));
 		$categories = DataObject::get('Category');
-		$categories = $categories->map('ID', 'Name');
-		$fields->addFieldToTab('Root.Content.Main', new CheckboxSetField('Categories', _t('MerchantProduct.CATEGORIES', 'Categories'), $categories));
+		if($categories) {
+			$categories = $categories->map('ID', 'Name');
+			$fields->addFieldToTab('Root.Content.Main', new CheckboxSetField('Categories', _t('MerchantProduct.CATEGORIES', 'Categories'), $categories));
+		}
 		if($this->ID) {
 			$parent = $this->Parent();
 			$locations = $parent->Locations();
 			if($locations) {
-				$fields->addFieldToTab('Root.Content.Main', new CheckboxSetField('ProductGroups', _t('MerchantProduct.PRODUCTGROUPS', 'Locations'), $locations));
+				$fields->addFieldToTab('Root.Content.Main', new CheckboxSetField('ProductGroups', _t('MerchantProduct.PRODUCTGROUPS', 'Locations'), $locations->map("ID", "Title")));
 			}
 		}
 		return $fields;
 	}
 
-	function Locations() {
-		return $this->getManyManyComponents('ProductGroups', MerchantLocation::$active_filter);
-	}
-
-	function EditLink() {
-		return $this->Link('edit');
-	}
-
-	function onBeforeWrite() {
-    	parent::onBeforeWrite();
-		$this->MetaTitle = $this->Title;
-		$this->MetaDescription = strip_tags($this->Content);
-	}
-
-	function onAfterWrite() {
-		parent::onAfterWrite();
-		$parent = $this->Parent();
-		$filter = '';
-		if($parent->exists() && is_a($parent, self::$default_parent)) {
-			$locations = $parent->Locations();
-			if($locations) {
-				$locations = implode(',', $locations->map('ID', 'ID'));
-				$filter = " AND ProductGroupID NOT IN ($locations)";
-			}
-		}
-		DB::query("DELETE FROM Product_ProductGroups WHERE ProductID = $this->ID$filter");
-	}
 
 	function getFrontEndFields(MerchantPage $parent = null) {
 		if(! $parent) {
@@ -76,9 +71,17 @@ class MerchantProduct extends Product {
 		$categories = DataObject::get('Category');
 		$categories = $categories->map('ID', 'Name');
 		$locations = $parent->Locations();
+		if($locations) {
+			$locations = $locations->map('ID', 'Title');
+		}
+		else {
+			$locations = array();
+		}
+		$allowPurchaseField = new CheckboxField('AllowPurchase', "<a href=\"".$this->Link()."\" taget=\"_blank\">"._t('MerchantProduct.ALLOW_PURCHASE', 'For sale')."</a>");
+		$allowPurchaseField->escape = false;
 		$fields = new FieldSet(
 			new TextField('Title', _t('MerchantProduct.TITLE', 'Product name')),
-			new CheckboxField('AllowPurchase', _t('MerchantProduct.ALLOW_PURCHASE', 'For sale')),
+			$allowPurchaseField,
 			new TextareaField('Content', _t('MerchantProduct.CONTENT', 'Description')),
 			new NumericField('Price', _t('MerchantProduct.PRICE', 'Price')),
 			new TextField('InternalItemID', _t('MerchantProduct.CODE', 'Product Code')),
@@ -92,9 +95,71 @@ class MerchantProduct extends Product {
 		$requiredFields = new RequiredFields('Title', 'Content', 'Price', 'Categories');
 		return array($fields, $requiredFields);
 	}
+
+	/****************************************
+	 * Controller related stuff
+	 ****************************************/
+
+	function Locations() {
+		return $this->getManyManyComponents('ProductGroups', MerchantLocation::get_active_filter(false));
+	}
+
+	function EditLink() {
+		return $this->Link('edit');
+	}
+
+	function canPurchase($member = null){
+		if(parent::canPurchase()) {
+			$productGroups = $this->ProductGroups();
+			if($productGroups && $productGroups->count()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * includes CanPurchase + Is listed in Product Groups
+	 *
+	 */
+	public function ForSale(){
+		return $this->canPurchase(null);
+	}
+
+	/****************************************
+	 * reading and writing
+	 ****************************************/
+
+	function onBeforeWrite() {
+		parent::onBeforeWrite();
+		$this->MetaTitle = $this->Title;
+		$this->MetaDescription = strip_tags($this->Content);
+		if($this->Sort < self::$minimum_sort) {
+			$this->Sort = $this->Sort + self::$minimum_sort;
+		}
+	}
+
+	function onAfterWrite() {
+		parent::onAfterWrite();
+		$parent = DataObject::get_by_id("MerchantPage", $this->ParentID);
+		$filter = '';
+		if($parent) {
+			$locations = DataObject::get('MerchantLocation', "ParentID = $this->ParentID");;
+			if($locations) {
+				$locations = implode(',', $locations->map('ID', 'ID'));
+				$filter = " AND \"ProductGroupID\" NOT IN ($locations)";
+			}
+		}
+		DB::query("DELETE FROM \"Product_ProductGroups\" WHERE \"ProductID\" = $this->ID $filter");
+	}
+
 }
 
 class MerchantProduct_Controller extends Product_Controller {
+
+	/****************************************
+	 * Actions
+	 ****************************************/
 
 	function edit() {
 		if(! $this->canFrontEndEdit()) {
@@ -102,6 +167,11 @@ class MerchantProduct_Controller extends Product_Controller {
 		}
 		return array();
 	}
+
+
+	/****************************************
+	 * Forms
+	 ****************************************/
 
 	function EditForm() {
 		list($fields, $requiredFields) = $this->getFrontEndFields();
@@ -118,10 +188,10 @@ class MerchantProduct_Controller extends Product_Controller {
 		if($this->canFrontEndEdit()) {
 			try {
 				$form->saveInto($this->dataRecord); // Call on dataRecord to fix SimpleImageField issue
-				$this->MenuTitle = $this->Title; // Copy of the title on the menu title
+				$this->dataRecord->MenuTitle = $this->dataRecord->Title; // Copy of the title on the menu title
 				$this->dataRecord->URLSegment = null; // To reset the value of the URLSegment in the onBeforeWrite of SiteTree
-				$this->writeToStage('Stage');
-				$this->Publish('Stage', 'Live');
+				$this->dataRecord->writeToStage('Stage');
+				$this->dataRecord->doPublish();
 				$form->sessionMessage(_t('MerchantProduct_Controller.SAVE_PRODUCT_DETAILS_SUCCESS', 'Your product details have been saved successfully.'), 'good');
 			}
 			catch (ValidationException $e) {
@@ -131,12 +201,31 @@ class MerchantProduct_Controller extends Product_Controller {
 		return Director::redirect($this->EditLink()); // Not redirectBack because the URLSegment might have changed
 	}
 
-	function removeProduct($data, $form) {
+	function removeproduct($data, $form) {
 		if($this->canFrontEndEdit()) {
 			$this->dataRecord->AllowPurchase = false;
-			$this->writeToStage('Stage');
-			$this->Publish('Stage', 'Live');
+			$this->dataRecord->writeToStage('Stage');
+			$this->dataRecord->doPublish();
 		}
 		return Director::redirect($this->Parent()->Link());
 	}
+
+	function saveallproducts(){
+		if(Permission::checkMember(Member::CurrentUserID(), array("ADMIN", "SITETREE_EDIT_ALL", "SHOPADMIN"))) {
+			$merchantProducts = DataObject::get("MerchantProduct");
+			if($merchantProducts) {
+				foreach($merchantProducts as $merchantProduct) {
+					if($merchantProduct->IsPublished()) {
+						$merchantProduct->writeToStage('Stage');
+						$merchantProduct->doPublish();
+						DB::alteration_message("publishing ".$merchantProduct->Title." - ".$merchantProduct->Title." - ".$merchantProduct->FullSiteTreeSort);
+					}
+				}
+			}
+		}
+		else {
+			Security::permissionFailure($this, "Please login first");
+		}
+	}
+
 }
